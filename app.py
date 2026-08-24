@@ -21,7 +21,7 @@ def bot_loop():
     
     while True:
         try:
-            updates = requests.get(f"{BASE_URL}/getUpdates", params={"offset": last_update + 1, "timeout": 5}).json()
+            updates = requests.get(f"{BASE_URL}/getUpdates", params={"offset": last_update + 1, "timeout": 30}).json()
             if updates.get("ok") and updates.get("result"):
                 for update in updates["result"]:
                     last_update = update["update_id"]
@@ -44,11 +44,26 @@ def bot_loop():
 def home():
     return "Bot is running!"
 
+# پینگ خودکار برای بیدار موندن
+def keep_alive():
+    while True:
+        try:
+            requests.get("https://guard-bot-2-cl22.onrender.com", timeout=5)
+            print("💓 پینگ خودکار")
+        except:
+            print("❌ پینگ ناموفق")
+        time.sleep(600)  # هر ۱۰ دقیقه
+
 if __name__ == "__main__":
-    # اجرای ربات توی یه رشته جدا
+    # اجرای ربات
     bot_thread = threading.Thread(target=bot_loop)
     bot_thread.daemon = True
     bot_thread.start()
+    
+    # اجرای پینگ خودکار
+    ping_thread = threading.Thread(target=keep_alive)
+    ping_thread.daemon = True
+    ping_thread.start()
     
     # اجرای وب‌سرور
     app.run(host="0.0.0.0", port=10000)
