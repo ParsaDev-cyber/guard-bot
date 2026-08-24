@@ -1,4 +1,9 @@
-import requests, json, time
+from flask import Flask
+import requests
+import time
+import threading
+
+app = Flask(__name__)
 
 TOKEN = "212950195:AfqKYLrhXkM1pqq18QF7m2hrTs1jzYoT_WA"
 BASE_URL = f"https://tapi.bale.ai/bot{TOKEN}"
@@ -10,7 +15,7 @@ def send_message(chat_id, text):
     except:
         return {"ok": False}
 
-def main():
+def bot_loop():
     print("🛡️ ربات نگهبان فعال شد!")
     last_update = 0
     
@@ -35,5 +40,15 @@ def main():
             print(f"⚠️ {e}")
         time.sleep(1)
 
+@app.route('/')
+def home():
+    return "Bot is running!"
+
 if __name__ == "__main__":
-    main()
+    # اجرای ربات توی یه رشته جدا
+    bot_thread = threading.Thread(target=bot_loop)
+    bot_thread.daemon = True
+    bot_thread.start()
+    
+    # اجرای وب‌سرور
+    app.run(host="0.0.0.0", port=10000)
