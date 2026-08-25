@@ -11,7 +11,7 @@ TOKEN = "886012408:V6CU51uMQU59W86Dq4MM44wlU6rON5zl39M"
 BASE_URL = f"https://tapi.bale.ai/bot{TOKEN}"
 
 CHANNEL_ID = "@SCYVu"
-CHANNEL_LINK = "https://ble.ir/SCYVu" "https://ble.ir/jensinqpbd"
+CHANNEL_LINK = "https://ble.ir/SCYVu" 
 BOT_USERNAME = "Idneobot"
 BOT_LINK = f"https://ble.ir/{BOT_USERNAME.replace('@', '')}"
 
