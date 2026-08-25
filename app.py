@@ -1,536 +1,3 @@
-from flask import Flask
-import requests, json, time, random, string, os, sys, traceback, threading, gc, hashlib
-from datetime import datetime, timedelta
-
-app = Flask(__name__)
-
-# ============================================
-# 🔧 تنظیمات هایپرسین
-# ============================================
-TOKEN = "886012408:V6CU51uMQU59W86Dq4MM44wlU6rON5zl39M"
-BASE_URL = f"https://tapi.bale.ai/bot{TOKEN}"
-
-CHANNEL_ID = "@SCYVu"
-CHANNEL_LINK = "https://ble.ir/SCYVu"
-BOT_USERNAME = "Idneobot"
-BOT_LINK = f"https://ble.ir/{BOT_USERNAME.replace('@', '')}"
-
-OWNER_ID = "580628965"
-OWNER_PASSWORD = "parsa0847"
-COIN_PASSWORD = "coin"
-INFINITE_COINS = 999999
-MIN_SIN = 15
-MIN_MEMBER = 1
-MEMBER_COST = 5
-START_GIFT = 25
-SEEN_REWARD = 1
-SIN_COST = 1
-INVITE_REWARD = 15
-DAILY_GIFT = 5
-
-DB_FILE = "sinzen_ultra_strong.json"
-
-# ============================================
-# 🛡️ محافظ ۱: ضد خطا (دست نخور)
-# ============================================
-class ErrorGuard:
-    """محافظ ضد خطا - هر خطایی رو در صدم ثانیه رفع میکنه"""
-    def __init__(self):
-        self.fix_count = 0
-        self.last_error = None
-        self.total_errors = 0
-    
-    def protect(self, func, *args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except Exception as e:
-            self.fix_count += 1
-            self.total_errors += 1
-            self.last_error = str(e)[:100]
-            print(f"🛡️ ErrorGuard: رفع خطا #{self.fix_count} | {self.last_error}")
-            gc.collect()
-            time.sleep(0.001)
-            return None
-    
-    def status(self):
-        return f"🛡️ ErrorGuard: {self.total_errors} خطا رفع شده | آخرین: {self.last_error}"
-
-# ============================================
-# 🛡️ محافظ ۲: ضد خاموشی (دست نخور)
-# ============================================
-class Watchdog:
-    """محافظ ضد خاموشی - ربات هیچوقت نمیخوابه"""
-    def __init__(self):
-        self.restart_count = 0
-        self.start_time = datetime.now()
-        self.last_restart = None
-    
-    def run(self, func):
-        while True:
-            try:
-                func()
-            except KeyboardInterrupt:
-                print("\n👋 خداحافظ!")
-                break
-            except Exception as e:
-                self.restart_count += 1
-                self.last_restart = datetime.now()
-                print(f"💀 Watchdog: ریستارت #{self.restart_count} | خطا: {str(e)[:100]}")
-                gc.collect()
-                time.sleep(0.001)
-                continue
-    
-    def status(self):
-        uptime = datetime.now() - self.start_time
-        return f"🔄 Watchdog: {self.restart_count} ریستارت | زمان اجرا: {uptime}"
-
-# ============================================
-# 🛡️ محافظ ۳: ضد VPN
-# ============================================
-class VPNGuard:
-    """محافظ ضد VPN - VPN روشن/خاموش = ربات کار میکنه"""
-    def __init__(self):
-        self.ok = False
-        self.retry_count = 0
-        self.max_retries = 999999
-    
-    def safe_call(self, func, *args, **kwargs):
-        while True:
-            try:
-                result = func(*args, **kwargs)
-                self.ok = True
-                self.retry_count = 0
-                return result
-            except:
-                self.ok = False
-                self.retry_count += 1
-                wait = min(self.retry_count * 0.5, 10)
-                time.sleep(wait)
-                continue
-    
-    def status(self):
-        return f"🛡️ VPNGuard: {'✅ وصل' if self.ok else '⚠️ در حال تلاش'} | تلاش: {self.retry_count}"
-
-# ============================================
-# 🛡️ محافظ ۴: سرور قوی
-# ============================================
-class ServerGuard:
-    """محافظ سرور - انگار سرور ۵۰۰ میلیونی داری"""
-    def __init__(self):
-        self.backup_count = 0
-        self.last_backup = None
-        self.power = "۵۰۰ میلیون تومان"
-    
-    def protect(self):
-        gc.collect()
-        try:
-            with open(DB_FILE, 'r', encoding='utf-8') as f:
-                data = f.read()
-            with open(f"{DB_FILE}.backup", 'w', encoding='utf-8') as f:
-                f.write(data)
-            with open(f"{DB_FILE}.backup2", 'w', encoding='utf-8') as f:
-                f.write(data)
-            self.backup_count += 1
-            self.last_backup = datetime.now()
-        except:
-            pass
-        return True
-    
-    def status(self):
-        return f"🖥️ ServerGuard: {self.backup_count} بک‌آپ | قدرت: {self.power}"
-
-# ============================================
-# 🛡️ محافظ ۵: ضد قطع نت
-# ============================================
-class NetGuard:
-    """محافظ ضد قطع نت - نت رفت، ربات نمیره"""
-    def __init__(self):
-        self.retry_count = 0
-        self.is_connected = False
-    
-    def safe_call(self, func, *args, **kwargs):
-        while True:
-            try:
-                result = func(*args, **kwargs)
-                self.is_connected = True
-                self.retry_count = 0
-                return result
-            except:
-                self.is_connected = False
-                self.retry_count += 1
-                wait = min(self.retry_count * 0.5, 10)
-                time.sleep(wait)
-                continue
-    
-    def status(self):
-        return f"🌐 NetGuard: {'✅ وصل' if self.is_connected else '⚠️ قطع'} | تلاش: {self.retry_count}"
-
-# ============================================
-# 🛡️ محافظ ۶: ضد فیلترشکن
-# ============================================
-class ProxyGuard:
-    """محافظ ضد فیلترشکن - فیلترشکن روشن/خاموش = ربات کار میکنه"""
-    def __init__(self):
-        self.ok = False
-        self.mode = "auto"
-    
-    def safe_call(self, func, *args, **kwargs):
-        try:
-            result = func(*args, **kwargs)
-            self.ok = True
-            return result
-        except:
-            try:
-                result = func(*args, **kwargs)
-                self.ok = True
-                return result
-            except:
-                self.ok = False
-                time.sleep(0.5)
-                return None
-    
-    def status(self):
-        return f"🔌 ProxyGuard: {'✅ فعال' if self.ok else '⚠️ در حال تنظیم'} | حالت: {self.mode}"
-
-# ============================================
-# 🛡️ راه‌اندازی همه محافظ‌ها
-# ============================================
-error_guard = ErrorGuard()
-watchdog = Watchdog()
-vpn_guard = VPNGuard()
-server_guard = ServerGuard()
-net_guard = NetGuard()
-proxy_guard = ProxyGuard()
-
-# ============================================
-# 📅 تابع تاریخ شمسی
-# ============================================
-def get_shamsi_date():
-    now = datetime.now()
-    gy = now.year
-    gm = now.month
-    gd = now.day
-    g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
-    if gm > 2:
-        gy2 = gy + 1
-    else:
-        gy2 = gy
-    days = 355666 + (365 * gy) + ((gy2 + 3) // 4) - ((gy2 + 99) // 100) + ((gy2 + 399) // 400) + gd + g_d_m[gm - 1]
-    jy = -1595 + (33 * (days // 12053))
-    days = days % 12053
-    jy = jy + 4 * (days // 1461)
-    days = days % 1461
-    if days > 365:
-        jy = jy + (days - 1) // 365
-        days = (days - 1) % 365
-    if days < 186:
-        jm = 1 + days // 31
-        jd = 1 + days % 31
-    else:
-        jm = 7 + (days - 186) // 30
-        jd = 1 + (days - 186) % 30
-    return f"{jy}/{jm:02d}/{jd:02d}"
-
-# ============================================
-# 🗄️ دیتابیس فوق قوی با ۳ لایه بک‌آپ
-# ============================================
-def load_db():
-    """بارگذاری دیتابیس با ۳ لایه محافظت"""
-    try:
-        if os.path.exists(DB_FILE):
-            with open(DB_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return data
-    except:
-        pass
-    
-    try:
-        if os.path.exists(f"{DB_FILE}.backup"):
-            with open(f"{DB_FILE}.backup", "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return data
-    except:
-        pass
-    
-    try:
-        if os.path.exists(f"{DB_FILE}.backup2"):
-            with open(f"{DB_FILE}.backup2", "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return data
-    except:
-        pass
-    
-    return {
-        "users": {}, "orders": {}, "member_orders": {}, "gift_codes": {},
-        "seen_records": {}, "member_records": {}, "invited_users": {},
-        "used_ips": {}, "order_counter": 0, "member_counter": 0,
-        "stats": {"total_orders": 0, "completed_orders": 0, "deleted_messages": 0, "total_members": 0, "completed_members": 0},
-        "pending_orders": {}, "pending_members": {}, "pending_gift": {},
-        "pending_broadcast": {}, "pending_add_coins": {}, "pending_transfer": {},
-        "invite_reward": INVITE_REWARD, "guaranteed_members": {}, "punished_users": [],
-        "coin_packets": {}, "pending_packet": {}, "pending_support": {},
-        "pending_support_reply": {}, "pending_order_status": {}, "pending_tools": {},
-        "pending_poll": {}, "polls": {}, "growth_stats": {}, "pending_coins_setting": {},
-        "blocked_users": [], "daily_gift_records": {}, "pending_spin": {}
-    }
-
-def save_db(data):
-    """ذخیره دیتابیس با ۳ لایه بک‌آپ"""
-    try:
-        with open(DB_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        with open(f"{DB_FILE}.backup", "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        with open(f"{DB_FILE}.backup2", "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except:
-        pass
-
-db = load_db()
-db.setdefault("invited_users", {})
-db.setdefault("pending_transfer", {})
-db.setdefault("invite_reward", INVITE_REWARD)
-db.setdefault("used_ips", {})
-db.setdefault("guaranteed_members", {})
-db.setdefault("punished_users", [])
-db.setdefault("coin_packets", {})
-db.setdefault("pending_packet", {})
-db.setdefault("pending_support", {})
-db.setdefault("pending_support_reply", {})
-db.setdefault("pending_order_status", {})
-db.setdefault("pending_tools", {})
-db.setdefault("pending_poll", {})
-db.setdefault("polls", {})
-db.setdefault("growth_stats", {})
-db.setdefault("pending_coins_setting", {})
-db.setdefault("blocked_users", [])
-db.setdefault("daily_gift_records", {})
-db.setdefault("pending_spin", {})
-save_db(db)
-
-def get_user(user_id):
-    user_id = str(user_id)
-    if user_id not in db["users"]:
-        db["users"][user_id] = {
-            "coins": 0, "joined": False, "got_start_gift": False,
-            "total_orders": 0, "completed_orders": 0,
-            "used_gift_codes": [], "username": "", "invite_code": None,
-            "invite_count": 0, "invited_by": None,
-            "first_seen": str(datetime.now()), "last_seen": str(datetime.now())
-        }
-        save_db(db)
-    return db["users"][user_id]
-
-def add_coins(user_id, amount):
-    user = get_user(user_id)
-    user["coins"] += amount
-    save_db(db)
-
-def remove_coins(user_id, amount):
-    user = get_user(user_id)
-    if user["coins"] >= amount:
-        user["coins"] -= amount
-        save_db(db)
-        return True
-    return False
-
-def get_coins(user_id):
-    return get_user(user_id)["coins"]
-
-# ============================================
-# 🛡️ توابع ضد باگ نوع تضمینی
-# ============================================
-def is_punished(user_id, order_id):
-    key = f"{user_id}_{order_id}"
-    return key in db["punished_users"]
-
-def mark_punished(user_id, order_id):
-    key = f"{user_id}_{order_id}"
-    if key not in db["punished_users"]:
-        db["punished_users"].append(key)
-        save_db(db)
-
-def is_already_paid(user_id, order_id):
-    return str(user_id) in db["member_records"].get(order_id, [])
-
-def is_order_owner(user_id, order_id):
-    order = db["member_orders"].get(order_id, {})
-    return order.get("user_id") == str(user_id)
-
-def is_guaranteed(order_id):
-    order = db["member_orders"].get(order_id, {})
-    return order.get("order_type") == "guaranteed"
-
-def is_48h_passed(join_time_str):
-    if not join_time_str:
-        return False
-    join_time = datetime.fromisoformat(join_time_str)
-    return datetime.now() >= join_time + timedelta(hours=48)
-
-def is_bot_admin(chat_id):
-    try:
-        result = get_chat_member(chat_id, int(TOKEN.split(":")[0]))
-        return result.get("ok") and result["result"]["status"] == "administrator"
-    except:
-        return False
-
-# ============================================
-# 📡 توابع ارتباط با API بله (فوق سریع با Session)
-# ============================================
-session = requests.Session()
-session.headers.update({'Connection': 'keep-alive', 'Accept-Encoding': 'gzip, deflate'})
-
-def api_call(method, data=None, timeout=30):
-    try:
-        if data is None:
-            data = {}
-        response = session.post(f"{BASE_URL}/{method}", data=data, timeout=timeout)
-        return response.json()
-    except:
-        try:
-            response = session.post(f"{BASE_URL}/{method}", data=data, timeout=3)
-            return response.json()
-        except:
-            return {"ok": False}
-
-def send_message(chat_id, text, reply_markup=None, parse_mode="Markdown"):
-    data = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
-    if reply_markup:
-        data["reply_markup"] = json.dumps(reply_markup)
-    return api_call("sendMessage", data)
-
-def send_reply(chat_id, reply_to_id, text, reply_markup=None):
-    data = {"chat_id": chat_id, "text": text, "reply_to_message_id": reply_to_id, "parse_mode": "Markdown"}
-    if reply_markup:
-        data["reply_markup"] = json.dumps(reply_markup)
-    return api_call("sendMessage", data)
-
-def edit_message_text(chat_id, message_id, text, reply_markup=None, parse_mode="Markdown"):
-    data = {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": parse_mode}
-    if reply_markup:
-        data["reply_markup"] = json.dumps(reply_markup)
-    return api_call("editMessageText", data)
-
-def delete_message(chat_id, message_id):
-    return api_call("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
-
-def forward_message(chat_id, from_chat_id, message_id):
-    return api_call("forwardMessage", {"chat_id": chat_id, "from_chat_id": from_chat_id, "message_id": message_id})
-
-def answer_callback(callback_id, text=None, show_alert=False):
-    data = {"callback_query_id": callback_id}
-    if text:
-        data["text"] = text
-    data["show_alert"] = show_alert
-    return api_call("answerCallbackQuery", data)
-
-def get_chat_member(chat_id, user_id):
-    return api_call("getChatMember", {"chat_id": chat_id, "user_id": user_id})
-
-def get_chat(chat_id):
-    return api_call("getChat", {"chat_id": chat_id})
-
-# ============================================
-# ✅ بررسی عضویت در کانال
-# ============================================
-def check_joined(user_id):
-    try:
-        result = get_chat_member(CHANNEL_ID, user_id)
-        if result.get("ok"):
-            status = result["result"]["status"]
-            if status in ["member", "administrator", "creator"]:
-                get_user(user_id)["joined"] = True
-                save_db(db)
-                return True
-        return False
-    except:
-        return False
-
-def must_join(user_id):
-    if not check_joined(user_id):
-        keyboard = {"inline_keyboard": [
-            [{"text": "🔗 عضویت در کانال", "url": CHANNEL_LINK}],
-            [{"text": "✅ عضو شدم", "callback_data": "check_join"}]
-        ]}
-        send_message(user_id, "🔒 **برای استفاده از ربات باید عضو کانال بشی!**\n\nلطفاً عضو شو بعد روی «عضو شدم» بزن.", keyboard)
-        return False
-    return True
-
-# ============================================
-# 🎮 کیبوردها (دست نخور)
-# ============================================
-def main_keyboard():
-    return {
-        "keyboard": [
-            [{"text": "🪙 کسب سکه"}],
-            [{"text": "👁️ ثبت سفارش سین"}, {"text": "👥 ثبت سفارش عضو"}],
-            [{"text": "💰 سکه‌های من"}, {"text": "🎁 زدن کد هدیه"}],
-            [{"text": "👥 دعوت دوستان"}, {"text": "👤 حساب کاربری"}],
-            [{"text": "💰 انتقال سکه"}, {"text": "📋 وضعیت سفارش"}],
-            [{"text": "🎁 گرفتن هدیه"}, {"text": "💬 پشتیبانی"}],
-            [{"text": "📖 راهنما"}]
-        ],
-        "resize_keyboard": True
-    }
-
-def owner_keyboard():
-    return {
-        "keyboard": [
-            [{"text": "🎁 ساخت کد هدیه"}, {"text": "🎁 سکه پاکت"}],
-            [{"text": "💰 افزودن سکه به همه"}, {"text": "💰 انتقال سکه"}],
-            [{"text": "🎁 تغییر سکه دعوت"}, {"text": "💰 تنظیم سکه‌ها"}],
-            [{"text": "⚙️ کاربردی‌ها"}, {"text": "📊 آمار لحظه‌ای"}],
-            [{"text": "📊 آمار کل"}, {"text": "📈 نمودار رشد"}],
-            [{"text": "📢 پیام همگانی"}, {"text": "📨 فوروارد همگانی"}],
-            [{"text": "📨 پیام به کاربر خاص"}, {"text": "🗑️ حذف سفارش"}],
-            [{"text": "📊 ارسال نظرسنجی"}],
-            [{"text": "🏆 رتبه‌بندی"}],
-            [{"text": "🔙 بازگشت"}]
-        ],
-        "resize_keyboard": True
-    }
-
-def cancel_keyboard():
-    return {"keyboard": [[{"text": "🔙 بازگشت"}]], "resize_keyboard": True}
-
-def tools_keyboard():
-    return {
-        "keyboard": [
-            [{"text": "🚫 مسدود کردن کاربر"}, {"text": "✅ رفع مسدودیت"}],
-            [{"text": "🔘 فرستادن دکمه شیشه‌ای"}, {"text": "⚡ سرعت ربات"}],
-            [{"text": "🔙 بازگشت"}]
-        ],
-        "resize_keyboard": True
-    }
-
-def coins_keyboard():
-    return {
-        "keyboard": [
-            [{"text": "👁️ تنظیم سکه گرفتن دیدن"}, {"text": "📝 تنظیم سکه دادن سین"}],
-            [{"text": "👥 تنظیم سکه گرفتن عضو"}, {"text": "💰 تنظیم سکه دادن عضو"}],
-            [{"text": "🔙 بازگشت"}]
-        ],
-        "resize_keyboard": True
-    }
-
-def gift_keyboard():
-    return {
-        "keyboard": [
-            [{"text": "🎁 هدیه روزانه"}, {"text": "🎰 گردونه شانس"}],
-            [{"text": "🔙 بازگشت"}]
-        ],
-        "resize_keyboard": True
-    }
-
-# ============================================
-# 🔢 تبدیل اعداد فارسی
-# ============================================
-def convert_number(text):
-    persian = "۰۱۲۳۴۵۶۷۸۹"
-    english = "0123456789"
-    for p, e in zip(persian, english):
-        text = text.replace(p, e)
-    return text
 # ============================================
 # 🎯 تابع اصلی پردازش پیام‌ها
 # ============================================
@@ -1316,68 +783,120 @@ def handle_message(message):
                 send_message(chat_id, "❌ عدد معتبر وارد کن!", owner_keyboard())
             return
         
-        # ============ پردازش عضوگیر ============
+        # ============ پردازش عضوگیر با چک ادمین واقعی ============
         pmem = db["pending_members"].get(user_id, {})
         if pmem.get("step") == "waiting_link":
             db["pending_members"][user_id] = {"step": "waiting_admin", "link": text.strip()}
             save_db(db)
-            send_message(chat_id, "🔗 **منو توی کانال ادمین کن!**\n✅ بعد بنویس: ادمین کردم", cancel_keyboard())
+            send_message(chat_id, "🔗 **منو توی کانال ادمین کن!**\n⚠️ با تمام دسترسی‌ها\n✅ بعد بنویس: ادمین کردم", cancel_keyboard())
             return
         
         if pmem.get("step") == "waiting_admin":
             if text.strip() == "ادمین کردم":
-                db["pending_members"][user_id]["step"] = "waiting_type"
-                save_db(db)
-                send_message(chat_id, "📥 **نوع عضویت:**\n\n🥉 ۱. معمولی (۵ سکه)\n🥇 ۲. تضمینی (۱۰ سکه)", cancel_keyboard())
+                link = pmem["link"]
+                try:
+                    if "ble.ir/" in link:
+                        chat_username = "@" + link.split("ble.ir/")[-1]
+                    else:
+                        chat_username = link
+                    chat_info = get_chat(chat_username)
+                    if chat_info.get("ok"):
+                        target_chat_id = chat_info["result"]["id"]
+                        # چک واقعی ادمین
+                        if is_bot_admin(target_chat_id):
+                            db["pending_members"][user_id]["chat_id"] = target_chat_id
+                            db["pending_members"][user_id]["step"] = "waiting_type"
+                            save_db(db)
+                            send_message(
+                                chat_id,
+                                "📥 **لطفاً نوع عضویت را انتخاب کنید:**\n\n"
+                                "━━━━━━━━━━━━━━━━\n\n"
+                                "🥉 **۱. عضو معمولی**\n\n"
+                                "💰 هر عضو = ۳ سکه\n\n"
+                                "👤 عضو معمولی هر وقت بخواد\n"
+                                "می‌تونه کانال رو ترک کنه\n"
+                                "و سکه‌شو بگیره!\n\n"
+                                "━━━━━━━━━━━━━━━━\n\n"
+                                "🥇 **۲. عضو تضمینی**\n\n"
+                                "💰 هر عضو = ۱۰ سکه\n\n"
+                                "🛡️ کاربر باید ۴۸ ساعت\n"
+                                "عضو کانال بمونه!\n\n"
+                                "⚠️ وقت ترک زودهنگام:\n"
+                                "• کاربر جریمه می‌شه\n"
+                                "• سکه به شما برمی‌گرده!\n\n"
+                                "━━━━━━━━━━━━━━━━\n\n"
+                                "🔢 لطفاً عدد ۱ یا ۲ را وارد کنید:",
+                                cancel_keyboard()
+                            )
+                        else:
+                            send_message(chat_id, "❌ **هنوز ادمین نشدم!**\nلطفاً دوباره تلاش کن.", cancel_keyboard())
+                    else:
+                        send_message(chat_id, "❌ **لینک نامعتبره!** دوباره تلاش کن.", cancel_keyboard())
+                except:
+                    send_message(chat_id, "❌ **خطا!** لینک رو چک کن.", cancel_keyboard())
             else:
-                send_message(chat_id, "⚠️ بنویس: ادمین کردم", cancel_keyboard())
+                send_message(chat_id, "⚠️ لطفاً بنویس: **ادمین کردم**", cancel_keyboard())
             return
         
         if pmem.get("step") == "waiting_type":
-            if text in ["1", "2"]:
-                db["pending_members"][user_id]["order_type"] = "normal" if text == "1" else "guaranteed"
+            choice = text.strip()
+            if choice in ["1", "2"]:
+                order_type = "normal" if choice == "1" else "guaranteed"
+                db["pending_members"][user_id]["order_type"] = order_type
                 db["pending_members"][user_id]["step"] = "waiting_count"
                 save_db(db)
-                cost = 5 if text == "1" else 10
-                send_message(chat_id, f"👥 **تعداد عضو رو وارد کن:**\n💰 هر عضو: {cost} سکه", cancel_keyboard())
+                cost_per = 5 if order_type == "normal" else 10
+                type_name = "معمولی" if order_type == "normal" else "تضمینی"
+                send_message(chat_id, f"📥 **ثبت سفارش عضو - {type_name}**\n\n👥 تعداد عضو موردنیاز را وارد کن داداش\n💰 هزینه هر عضو: {cost_per} سکه\n📌 حداقل سفارش: ۱ عضو\n\n⌨️ فقط عدد بفرست!", cancel_keyboard())
             else:
-                send_message(chat_id, "❌ فقط ۱ یا ۲!", cancel_keyboard())
+                send_message(chat_id, "❌ فقط عدد ۱ یا ۲ را وارد کنید!", cancel_keyboard())
             return
         
         if pmem.get("step") == "waiting_count":
             try:
                 count = int(convert_number(text))
-                cost_per = 5 if pmem.get("order_type") == "normal" else 10
+                if count < MIN_MEMBER:
+                    send_message(chat_id, f"❌ حداقل باید {MIN_MEMBER} عضو انتخاب کنی!", cancel_keyboard())
+                    return
+                
+                link = pmem["link"]
+                target_chat_id = pmem["chat_id"]
+                order_type = pmem.get("order_type", "normal")
+                cost_per = 5 if order_type == "normal" else 10
                 total_cost = count * cost_per
-                if not remove_coins(user_id, total_cost):
-                    send_message(chat_id, "❌ سکه کافی نداری!", cancel_keyboard())
+                
+                coins = get_coins(user_id)
+                if coins < total_cost:
+                    send_message(chat_id, f"❌ سکه کافی نداری!\n💰 موجودی: {coins:,} | 💰 نیاز: {total_cost:,}", cancel_keyboard())
                     del db["pending_members"][user_id]
                     save_db(db)
                     return
                 
+                remove_coins(user_id, total_cost)
                 db["member_counter"] = db.get("member_counter", 0) + 1
                 mnum = db["member_counter"]
                 mid = str(int(time.time() * 1000))
-                reward = 3 if pmem.get("order_type") == "normal" else 7
-                type_name = "معمولی" if pmem.get("order_type") == "normal" else "تضمینی"
+                reward = 3 if order_type == "normal" else 7
+                type_name = "معمولی" if order_type == "normal" else "تضمینی"
+                warning_text = "\n⚠️ باید ۴۸ ساعت بمونی!" if order_type == "guaranteed" else ""
                 
-                db["member_orders"][mid] = {"user_id": user_id, "count": count, "link": pmem["link"], "message_id": None, "seen_count": 0, "status": "active", "order_number": mnum, "order_type": pmem.get("order_type"), "reward": reward}
+                db["member_orders"][mid] = {"user_id": user_id, "count": count, "link": link, "chat_id": target_chat_id, "message_id": None, "seen_count": 0, "status": "active", "order_number": mnum, "order_type": order_type, "reward": reward}
                 db["member_records"][mid] = []
                 db["stats"]["total_members"] = db["stats"].get("total_members", 0) + 1
                 
                 keyboard = {"inline_keyboard": [
                     [{"text": f"🪙 {reward} سکه میگیری!", "callback_data": f"info_{mid}"}],
-                    [{"text": "🔗 عضویت در کانال", "url": pmem["link"]}, {"text": "✅ عضو شدم", "callback_data": f"mjoin_{mid}"}],
+                    [{"text": "🔗 عضویت در کانال", "url": link}, {"text": "✅ عضو شدم", "callback_data": f"mjoin_{mid}"}],
                     [{"text": "🚨 گزارش", "callback_data": f"mreport_{mid}"}, {"text": "🤖 مشاهده ربات", "url": BOT_LINK}]
                 ]}
                 
-                sent = send_message(CHANNEL_ID, f"📋 **سفارش عضو - {type_name}**\n\n🔗 لینک: {pmem['link']}\n👥 تعداد: {count}\n✅ عضو شده: 0\n#{mnum}\n\n🪙 **{reward} سکه میگیری!**", keyboard)
+                sent = send_message(CHANNEL_ID, f"📋 **سفارش عضو - {type_name}**\n\n🔗 لینک کانال: {link}\n👥 تعداد درخواستی: {count}\n✅ تعداد عضو شده: 0\n#{mnum}\n\n🪙 **{reward} سکه میگیری!**{warning_text}", keyboard)
                 if sent.get("ok"):
                     db["member_orders"][mid]["message_id"] = sent["result"]["message_id"]
                 
                 del db["pending_members"][user_id]
                 save_db(db)
-                send_message(chat_id, f"🎉 **سفارش ثبت شد!**\n💰 موجودی: {get_coins(user_id):,} سکه", main_keyboard())
+                send_message(chat_id, f"🎉 **سفارش با موفقیت ثبت شد!**\n\n💰 موجودی جدید: {get_coins(user_id):,} سکه", main_keyboard())
             except:
                 send_message(chat_id, "❌ عدد معتبر وارد کن!", cancel_keyboard())
             return
@@ -1460,7 +979,7 @@ def handle_message(message):
         print(f"⚠️ خطا: {e}")
         traceback.print_exc()
 # ============================================
-# 🔘 پردازش دکمه‌های شیشه‌ای
+# 🔘 پردازش دکمه‌های شیشه‌ای با چک واقعی عضویت
 # ============================================
 def handle_callback(callback):
     try:
@@ -1471,11 +990,13 @@ def handle_callback(callback):
         chat_id = message.get("chat", {}).get("id", CHANNEL_ID)
         
         if data == "check_join":
+            # چک واقعی عضویت
             if check_joined(user_id):
                 user = get_user(user_id)
                 if not user.get("got_start_gift"):
                     add_coins(user_id, START_GIFT)
                     user["got_start_gift"] = True
+                    
                     if user.get("invited_by") and str(user_id) in db["invited_users"]:
                         inviter_id = user["invited_by"]
                         add_coins(inviter_id, INVITE_REWARD)
@@ -1486,6 +1007,7 @@ def handle_callback(callback):
                             send_message(int(inviter_id), f"🎉 **کاربر عضو کانال هم شد!**\n\n🎁 **{INVITE_REWARD} سکه بهت اهدا شد!** 💰")
                         except:
                             pass
+                    
                     save_db(db)
                     answer_callback(callback_id, f"✅ عضو شدی! 🎁 {START_GIFT} سکه هدیه گرفتی!")
                     send_message(user_id, f"✅ **عضو شدی!** 🎉\n\n🎁 **{START_GIFT} سکه هدیه** بهت اضافه شد!\n💰 موجودی: {get_coins(user_id):,} سکه", main_keyboard())
@@ -1493,7 +1015,8 @@ def handle_callback(callback):
                     answer_callback(callback_id, "✅ عضو شدی!")
                     send_message(user_id, "✅ **عضو شدی!** 🎉", main_keyboard())
             else:
-                answer_callback(callback_id, "❌ هنوز عضو نشدی!")
+                # واقعاً عضو نشده
+                answer_callback(callback_id, "❌ هنوز عضو نشدی! لطفاً اول عضو کانال شو!", show_alert=True)
             return
         
         if data == "back_to_main":
@@ -1649,45 +1172,53 @@ def handle_callback(callback):
                 answer_callback(callback_id, "❌ نمیتونی توی سفارش خودت عضو بشی!", show_alert=True)
                 return
             
-            db["member_records"][mid].append(str(user_id))
-            order["seen_count"] += 1
-            reward = order.get("reward", 3)
-            add_coins(user_id, reward)
-            otype = order.get("order_type", "normal")
-            type_name = "معمولی" if otype == "normal" else "تضمینی"
+            # چک واقعی عضویت در کانال سفارش
+            target_chat_id = order.get("chat_id")
+            member_status = get_chat_member(target_chat_id, user_id)
             
-            if otype == "guaranteed":
-                db["guaranteed_members"][f"{user_id}_{mid}"] = str(datetime.now())
+            if member_status.get("ok") and member_status["result"]["status"] in ["member", "administrator", "creator"]:
+                db["member_records"][mid].append(str(user_id))
+                order["seen_count"] += 1
+                reward = order.get("reward", 3)
+                add_coins(user_id, reward)
+                otype = order.get("order_type", "normal")
+                type_name = "معمولی" if otype == "normal" else "تضمینی"
+                
+                if otype == "guaranteed":
+                    db["guaranteed_members"][f"{user_id}_{mid}"] = str(datetime.now())
+                    save_db(db)
+                
+                new_seen = order["seen_count"]
+                count = order["count"]
+                mnum = order.get("order_number", "?")
+                answer_callback(callback_id, f"✅ عضو شدی! 🎉 +{reward} سکه", show_alert=True)
+                
+                if order.get("message_id"):
+                    keyboard = {"inline_keyboard": [
+                        [{"text": f"🪙 {reward} سکه میگیری!", "callback_data": f"info_{mid}"}],
+                        [{"text": "🔗 عضویت در کانال", "url": order["link"]}, {"text": "✅ عضو شدم", "callback_data": f"mjoin_{mid}"}],
+                        [{"text": "🚨 گزارش", "callback_data": f"mreport_{mid}"}, {"text": "🤖 مشاهده ربات", "url": BOT_LINK}]
+                    ]}
+                    try:
+                        edit_message_text(CHANNEL_ID, order["message_id"], f"📋 **سفارش عضو - {type_name}**\n\n🔗 لینک: {order['link']}\n👥 تعداد: {count}\n✅ عضو شده: {new_seen}\n#{mnum}\n\n🪙 **{reward} سکه میگیری!**", keyboard)
+                    except:
+                        pass
+                
+                if new_seen >= count:
+                    order["status"] = "completed"
+                    db["stats"]["completed_members"] = db["stats"].get("completed_members", 0) + 1
+                    try:
+                        delete_message(CHANNEL_ID, order["message_id"])
+                    except:
+                        pass
+                    try:
+                        send_message(int(order["user_id"]), f"🎉 **تبریک!**\n\n{count} عضو کامل شد!")
+                    except:
+                        pass
                 save_db(db)
-            
-            new_seen = order["seen_count"]
-            count = order["count"]
-            mnum = order.get("order_number", "?")
-            answer_callback(callback_id, f"✅ عضو شدی! 🎉 +{reward} سکه", show_alert=True)
-            
-            if order.get("message_id"):
-                keyboard = {"inline_keyboard": [
-                    [{"text": f"🪙 {reward} سکه میگیری!", "callback_data": f"info_{mid}"}],
-                    [{"text": "🔗 عضویت در کانال", "url": order["link"]}, {"text": "✅ عضو شدم", "callback_data": f"mjoin_{mid}"}],
-                    [{"text": "🚨 گزارش", "callback_data": f"mreport_{mid}"}, {"text": "🤖 مشاهده ربات", "url": BOT_LINK}]
-                ]}
-                try:
-                    edit_message_text(CHANNEL_ID, order["message_id"], f"📋 **سفارش عضو - {type_name}**\n\n🔗 لینک: {order['link']}\n👥 تعداد: {count}\n✅ عضو شده: {new_seen}\n#{mnum}\n\n🪙 **{reward} سکه میگیری!**", keyboard)
-                except:
-                    pass
-            
-            if new_seen >= count:
-                order["status"] = "completed"
-                db["stats"]["completed_members"] = db["stats"].get("completed_members", 0) + 1
-                try:
-                    delete_message(CHANNEL_ID, order["message_id"])
-                except:
-                    pass
-                try:
-                    send_message(int(order["user_id"]), f"🎉 **تبریک!**\n\n{count} عضو کامل شد!")
-                except:
-                    pass
-            save_db(db)
+            else:
+                # واقعاً عضو نشده
+                answer_callback(callback_id, "❌ هنوز عضو نشدی! اول عضو شو تا سکه بگیری!", show_alert=True)
             return
         
         if data.startswith("mreport_"):
