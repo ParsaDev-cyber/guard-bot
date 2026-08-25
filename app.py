@@ -1,3 +1,434 @@
+from flask import Flask
+import requests, json, time, random, string, os, sys, traceback, threading, gc, hashlib
+from datetime import datetime, timedelta
+
+app = Flask(__name__)
+
+# ============================================
+# 🔧 تنظیمات هایپرسین
+# ============================================
+TOKEN = "886012408:V6CU51uMQU59W86Dq4MM44wlU6rON5zl39M"
+BASE_URL = f"https://tapi.bale.ai/bot{TOKEN}"
+
+CHANNEL_ID = "@SCYVu"
+CHANNEL_LINK = "https://ble.ir/SCYVu"
+BOT_USERNAME = "Idneobot"
+BOT_LINK = f"https://ble.ir/{BOT_USERNAME.replace('@', '')}"
+
+OWNER_ID = "580628965"
+OWNER_PASSWORD = "parsa0847"
+COIN_PASSWORD = "coin"
+INFINITE_COINS = 999999
+MIN_SIN = 15
+MIN_MEMBER = 1
+MEMBER_COST = 5
+START_GIFT = 25
+SEEN_REWARD = 1
+SIN_COST = 1
+INVITE_REWARD = 15
+DAILY_GIFT = 5
+
+DB_FILE = "sinzen_new_fresh.json"
+
+# ============================================
+# 🛡️ محافظ ۱: ضد خطا
+# ============================================
+class ErrorGuard:
+    def __init__(self):
+        self.fix_count = 0
+        self.last_error = None
+        self.total_errors = 0
+    
+    def protect(self, func, *args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            self.fix_count += 1
+            self.total_errors += 1
+            self.last_error = str(e)[:100]
+            print(f"🛡️ ErrorGuard: #{self.fix_count}")
+            gc.collect()
+            time.sleep(0.001)
+            return None
+    
+    def status(self):
+        return f"🛡️ ErrorGuard: {self.total_errors}"
+
+class Watchdog:
+    def __init__(self):
+        self.restart_count = 0
+        self.start_time = datetime.now()
+    
+    def run(self, func):
+        while True:
+            try:
+                func()
+            except KeyboardInterrupt:
+                break
+            except Exception as e:
+                self.restart_count += 1
+                print(f"💀 Watchdog: #{self.restart_count}")
+                gc.collect()
+                time.sleep(0.001)
+                continue
+    
+    def status(self):
+        return f"🔄 Watchdog: {self.restart_count}"
+
+class VPNGuard:
+    def __init__(self):
+        self.ok = False
+        self.retry_count = 0
+    
+    def safe_call(self, func, *args, **kwargs):
+        while True:
+            try:
+                result = func(*args, **kwargs)
+                self.ok = True
+                return result
+            except:
+                self.retry_count += 1
+                time.sleep(min(self.retry_count * 0.5, 10))
+                continue
+    
+    def status(self):
+        return f"🛡️ VPNGuard: {'✅' if self.ok else '⚠️'}"
+
+class ServerGuard:
+    def __init__(self):
+        self.backup_count = 0
+    
+    def protect(self):
+        gc.collect()
+        try:
+            with open(DB_FILE, 'r', encoding='utf-8') as f:
+                data = f.read()
+            with open(f"{DB_FILE}.backup", 'w', encoding='utf-8') as f:
+                f.write(data)
+            with open(f"{DB_FILE}.backup2", 'w', encoding='utf-8') as f:
+                f.write(data)
+            self.backup_count += 1
+        except:
+            pass
+        return True
+    
+    def status(self):
+        return f"🖥️ ServerGuard: {self.backup_count}"
+
+class NetGuard:
+    def __init__(self):
+        self.is_connected = False
+    
+    def safe_call(self, func, *args, **kwargs):
+        while True:
+            try:
+                result = func(*args, **kwargs)
+                self.is_connected = True
+                return result
+            except:
+                time.sleep(0.5)
+                continue
+    
+    def status(self):
+        return f"🌐 NetGuard: {'✅' if self.is_connected else '⚠️'}"
+
+class ProxyGuard:
+    def __init__(self):
+        self.ok = False
+    
+    def safe_call(self, func, *args, **kwargs):
+        try:
+            result = func(*args, **kwargs)
+            self.ok = True
+            return result
+        except:
+            self.ok = False
+            time.sleep(0.5)
+            return None
+    
+    def status(self):
+        return f"🔌 ProxyGuard: {'✅' if self.ok else '⚠️'}"
+
+error_guard = ErrorGuard()
+watchdog = Watchdog()
+vpn_guard = VPNGuard()
+server_guard = ServerGuard()
+net_guard = NetGuard()
+proxy_guard = ProxyGuard()
+
+# ============================================
+# 📅 تاریخ شمسی
+# ============================================
+def get_shamsi_date():
+    now = datetime.now()
+    gy, gm, gd = now.year, now.month, now.day
+    g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+    gy2 = gy + 1 if gm > 2 else gy
+    days = 355666 + (365 * gy) + ((gy2 + 3) // 4) - ((gy2 + 99) // 100) + ((gy2 + 399) // 400) + gd + g_d_m[gm - 1]
+    jy = -1595 + (33 * (days // 12053))
+    days = days % 12053
+    jy = jy + 4 * (days // 1461)
+    days = days % 1461
+    if days > 365:
+        jy = jy + (days - 1) // 365
+        days = (days - 1) % 365
+    if days < 186:
+        jm = 1 + days // 31
+        jd = 1 + days % 31
+    else:
+        jm = 7 + (days - 186) // 30
+        jd = 1 + (days - 186) % 30
+    return f"{jy}/{jm:02d}/{jd:02d}"
+
+# ============================================
+# 🗄️ دیتابیس — دست نخور
+# ============================================
+def load_db():
+    try:
+        if os.path.exists(DB_FILE):
+            with open(DB_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except:
+        pass
+    return {
+        "users": {}, "orders": {}, "member_orders": {}, "gift_codes": {},
+        "seen_records": {}, "member_records": {}, "invited_users": {},
+        "order_counter": 0, "member_counter": 0,
+        "stats": {"total_orders": 0, "completed_orders": 0, "deleted_messages": 0, "total_members": 0, "completed_members": 0},
+        "pending_orders": {}, "pending_members": {}, "pending_gift": {},
+        "pending_broadcast": {}, "pending_add_coins": {}, "pending_transfer": {},
+        "invite_reward": INVITE_REWARD, "guaranteed_members": {}, "punished_users": [],
+        "coin_packets": {}, "pending_packet": {}, "pending_support": {},
+        "pending_support_reply": {}, "pending_order_status": {}, "pending_tools": {},
+        "pending_poll": {}, "polls": {}, "growth_stats": {}, "pending_coins_setting": {},
+        "blocked_users": [], "daily_gift_records": {}, "pending_spin": {}
+    }
+
+def save_db(data):
+    try:
+        with open(DB_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except:
+        pass
+
+db = load_db()
+save_db(db)
+
+def get_user(user_id):
+    user_id = str(user_id)
+    if user_id not in db["users"]:
+        db["users"][user_id] = {
+            "coins": 0, "joined": False, "got_start_gift": False,
+            "total_orders": 0, "completed_orders": 0,
+            "used_gift_codes": [], "username": "",
+            "invite_count": 0, "invited_by": None,
+            "first_seen": str(datetime.now()), "last_seen": str(datetime.now())
+        }
+        save_db(db)
+    return db["users"][user_id]
+
+def add_coins(user_id, amount):
+    user = get_user(user_id)
+    user["coins"] += amount
+    save_db(db)
+
+def remove_coins(user_id, amount):
+    user = get_user(user_id)
+    if user["coins"] >= amount:
+        user["coins"] -= amount
+        save_db(db)
+        return True
+    return False
+
+def get_coins(user_id):
+    return get_user(user_id)["coins"]
+
+def is_punished(user_id, order_id):
+    return f"{user_id}_{order_id}" in db["punished_users"]
+
+def mark_punished(user_id, order_id):
+    key = f"{user_id}_{order_id}"
+    if key not in db["punished_users"]:
+        db["punished_users"].append(key)
+        save_db(db)
+
+def is_order_owner(user_id, order_id):
+    order = db["member_orders"].get(order_id, {})
+    return order.get("user_id") == str(user_id)
+
+def is_48h_passed(join_time_str):
+    if not join_time_str:
+        return False
+    join_time = datetime.fromisoformat(join_time_str)
+    return datetime.now() >= join_time + timedelta(hours=48)
+
+# ============================================
+# 📡 API
+# ============================================
+def api_call(method, data=None, timeout=30):
+    try:
+        if data is None:
+            data = {}
+        response = requests.post(f"{BASE_URL}/{method}", json=data, timeout=timeout)
+        return response.json()
+    except:
+        try:
+            response = requests.post(f"{BASE_URL}/{method}", json=data, timeout=3)
+            return response.json()
+        except:
+            return {"ok": False}
+
+def send_message(chat_id, text, reply_markup=None, parse_mode="Markdown"):
+    data = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
+    if reply_markup:
+        data["reply_markup"] = json.dumps(reply_markup)
+    return api_call("sendMessage", data)
+
+def send_reply(chat_id, reply_to_id, text, reply_markup=None):
+    data = {"chat_id": chat_id, "text": text, "reply_to_message_id": reply_to_id, "parse_mode": "Markdown"}
+    if reply_markup:
+        data["reply_markup"] = json.dumps(reply_markup)
+    return api_call("sendMessage", data)
+
+def edit_message_text(chat_id, message_id, text, reply_markup=None):
+    data = {"chat_id": chat_id, "message_id": message_id, "text": text}
+    if reply_markup:
+        data["reply_markup"] = json.dumps(reply_markup)
+    return api_call("editMessageText", data)
+
+def delete_message(chat_id, message_id):
+    return api_call("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+
+def forward_message(chat_id, from_chat_id, message_id):
+    return api_call("forwardMessage", {"chat_id": chat_id, "from_chat_id": from_chat_id, "message_id": message_id})
+
+def answer_callback(callback_id, text=None, show_alert=False):
+    data = {"callback_query_id": callback_id}
+    if text:
+        data["text"] = text
+    data["show_alert"] = show_alert
+    return api_call("answerCallbackQuery", data)
+
+def get_chat_member(chat_id, user_id):
+    return api_call("getChatMember", {"chat_id": chat_id, "user_id": user_id})
+
+def get_chat(chat_id):
+    return api_call("getChat", {"chat_id": chat_id})
+
+# ============================================
+# ✅ چک واقعی عضویت
+# ============================================
+def check_joined(user_id):
+    try:
+        result = get_chat_member(CHANNEL_ID, user_id)
+        if result.get("ok"):
+            status = result["result"]["status"]
+            if status in ["member", "administrator", "creator"]:
+                get_user(user_id)["joined"] = True
+                save_db(db)
+                return True
+            else:
+                return False
+        return False
+    except:
+        return False
+
+# ============================================
+# ✅ چک واقعی ادمین
+# ============================================
+def is_bot_admin(chat_id):
+    try:
+        bot_id = int(TOKEN.split(":")[0])
+        result = get_chat_member(chat_id, bot_id)
+        if result.get("ok"):
+            status = result["result"]["status"]
+            return status in ["administrator", "creator"]
+        return False
+    except:
+        return False
+
+def must_join(user_id):
+    if not check_joined(user_id):
+        keyboard = {"inline_keyboard": [
+            [{"text": "🔗 عضویت در کانال", "url": CHANNEL_LINK}],
+            [{"text": "✅ عضو شدم", "callback_data": "check_join"}]
+        ]}
+        send_message(user_id, "🔒 **برای استفاده از ربات باید عضو کانال بشی!**", keyboard)
+        return False
+    return True
+
+# ============================================
+# 🎮 کیبوردها
+# ============================================
+def main_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "🪙 کسب سکه"}],
+            [{"text": "👁️ ثبت سفارش سین"}, {"text": "👥 ثبت سفارش عضو"}],
+            [{"text": "💰 سکه‌های من"}, {"text": "🎁 زدن کد هدیه"}],
+            [{"text": "👥 دعوت دوستان"}, {"text": "👤 حساب کاربری"}],
+            [{"text": "💰 انتقال سکه"}, {"text": "📋 وضعیت سفارش"}],
+            [{"text": "🎁 گرفتن هدیه"}, {"text": "💬 پشتیبانی"}],
+            [{"text": "📖 راهنما"}]
+        ],
+        "resize_keyboard": True
+    }
+
+def owner_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "🎁 ساخت کد هدیه"}, {"text": "🎁 سکه پاکت"}],
+            [{"text": "💰 افزودن سکه به همه"}, {"text": "💰 انتقال سکه"}],
+            [{"text": "🎁 تغییر سکه دعوت"}, {"text": "💰 تنظیم سکه‌ها"}],
+            [{"text": "⚙️ کاربردی‌ها"}, {"text": "📊 آمار لحظه‌ای"}],
+            [{"text": "📊 آمار کل"}, {"text": "📈 نمودار رشد"}],
+            [{"text": "📢 پیام همگانی"}, {"text": "📨 فوروارد همگانی"}],
+            [{"text": "📨 پیام به کاربر خاص"}, {"text": "🗑️ حذف سفارش"}],
+            [{"text": "📊 ارسال نظرسنجی"}],
+            [{"text": "🏆 رتبه‌بندی"}],
+            [{"text": "🔙 بازگشت"}]
+        ],
+        "resize_keyboard": True
+    }
+
+def cancel_keyboard():
+    return {"keyboard": [[{"text": "🔙 بازگشت"}]], "resize_keyboard": True}
+
+def tools_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "🚫 مسدود کردن کاربر"}, {"text": "✅ رفع مسدودیت"}],
+            [{"text": "🔘 فرستادن دکمه شیشه‌ای"}, {"text": "⚡ سرعت ربات"}],
+            [{"text": "🔙 بازگشت"}]
+        ],
+        "resize_keyboard": True
+    }
+
+def coins_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "👁️ تنظیم سکه گرفتن دیدن"}, {"text": "📝 تنظیم سکه دادن سین"}],
+            [{"text": "👥 تنظیم سکه گرفتن عضو"}, {"text": "💰 تنظیم سکه دادن عضو"}],
+            [{"text": "🔙 بازگشت"}]
+        ],
+        "resize_keyboard": True
+    }
+
+def gift_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "🎁 هدیه روزانه"}, {"text": "🎰 گردونه شانس"}],
+            [{"text": "🔙 بازگشت"}]
+        ],
+        "resize_keyboard": True
+    }
+
+def convert_number(text):
+    persian = "۰۱۲۳۴۵۶۷۸۹"
+    english = "0123456789"
+    for p, e in zip(persian, english):
+        text = text.replace(p, e)
+    return text
 # ============================================
 # 🎯 تابع اصلی پردازش پیام‌ها
 # ============================================
