@@ -7,7 +7,7 @@ app = Flask(__name__)
 # ============================================
 # 🔧 تنظیمات هایپرسین
 # ============================================
-TOKEN = "886012408:V6CU51uMQU59W86Dq4MM44wlU6rON5zl39M"
+TOKEN = "886012408:v6Y7CxH15rTVsPt3zntOoCgh7O997ct5IYk"
 BASE_URL = f"https://tapi.bale.ai/bot{TOKEN}"
 
 CHANNEL_ID = "@SCYVu"
