@@ -357,7 +357,6 @@ def save_db(data):
             json.dump(data, f, ensure_ascii=False, indent=2)
         with open(f"{DB_FILE}.backup2", "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        save_db_to_github()
     except:
         pass
 
@@ -2562,6 +2561,14 @@ def keep_alive():
 # ============================================
 # 🚀 اجرای همزمان همه
 # ============================================
+   def auto_save():
+    while True:
+        time.sleep(300)
+        save_db_to_github()
+        print("💾 ذخیره خودکار!")
+
+threading.Thread(target=auto_save, daemon=True).start()
+
 if __name__ == "__main__":
     bot_thread = threading.Thread(target=main)
     bot_thread.daemon = True
