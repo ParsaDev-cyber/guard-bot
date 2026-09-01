@@ -31,7 +31,7 @@ DB_FILE = "sinzen_ultra_strong.json"
 
 # ============================================
 # 🔗 تنظیمات گیتهاب
-# ============================================
+#. ============================================
 GITHUB_TOKEN = "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"
 GITHUB_REPO = "ParsaDev-cyber/guard-bot"
 GITHUB_DB_FILE = "sinzen_database.json"
